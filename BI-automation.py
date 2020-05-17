@@ -14,6 +14,7 @@ sheet = client.open("load1").sheet1
 data_dict = sheet.get_all_records()
 sheet_new=client.open("key").sheet1
 key_dict = sheet_new.get_all_records()
+#dataframe for live_data and keyaccounts
 df = pd.DataFrame(data_dict)
 keyacc_df= pd.DataFrame(key_dict)
 
@@ -35,7 +36,7 @@ df.columns = df.columns.str.replace('1','one')
 df.columns = df.columns.str.replace('/','_or_')
 
 i=1
-# If the account table already has some values we set "i" to (max value +1)
+# If the account table already has some values we set "i" to (max value +1).
 if not(new_df.empty):
        i=new_df['accountid'].max() +1
 # Looping through the live data and adding a new account entry to account table and DF / else Pass
