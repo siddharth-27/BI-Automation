@@ -113,8 +113,9 @@ def createTables(engine):
     print('Tables created successfully')
     return accountData, liveData
 
+
 def insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData) :
-    accountDf = pd.DataFrame(data = None, columns=['accountid','account','keyaccount'])
+    accountDf = new_df = pd.read_sql_query('select * from account_data',con=engine)
     accIndex = accountDf['accountid'].max() + 1
     if math.isnan(accIndex) :
         accIndex = 1
@@ -149,6 +150,7 @@ def insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData) :
     print('Updated the required keyAccounts to 1')
     return accountDf
 
+
 def dropRowsFromLiveData(liveDataDf, accountDf) :
     liveDataDf.columns = map(str.lower, liveDataDf.columns)
     liveDataDf = pd.merge(liveDataDf, accountDf, on ='account', how='outer')
@@ -167,23 +169,28 @@ def id_generator():
             
     newimport_id = lambda : str(datetime.now().year)+(str(datetime.now().month).zfill(2))+'01'
     # select from db
-    getid = 'select max(accountid) from account_data ;'
+    getid = 'select max(import_id) from live_data ;'
     import_id = conn.execute(getid)
     for row in import_id:
         if row[0]:
             import_id=check(str(int(row[0])))
+            return import_id
         else:
             import_id=newimport_id()
     return import_id
 
-'''
-def delete_live_data(delete_id):
-    del_stmt = accountData.delete().where(import_id.c.id = delete_id)
-    conn.execute(del_stmt)
-'''
-
-
-
+def insert_live_data(liveDataDf):
+    for x in liveDataDf.columns[5:]:
+        liveDataDf = liveDataDf.astype(str)
+        liveDataDf[x] = liveDataDf[x].str.replace(',', '')
+    change=(liveDataDf.columns[5:])
+    liveDataDf[change]=liveDataDf[change].apply(pd.to_numeric)         
+    liveDataDf['import_id']=import_id
+    liveDataDf.to_sql('live_data', con=engine,if_exists='append',index=False)
+    print('live data add to the table successfully')
+    return liveDataDf
+        
+    
 
 conn,engine = connectToPostgres()
 liveDataSheet, keyAccSheet = connectToSheets()
@@ -196,9 +203,14 @@ import_id = int(id_generator())
 cols = liveDataDf.columns.tolist()
 cols = cols[-1:] + cols[:-1]
 liveDataDf = liveDataDf[cols]
-liveDataDf['import_id']=import_id
+liveDataDf = insert_live_data(liveDataDf)
+
 
 '''
+def delete_live_data(delete_id):
+    del_stmt = accountData.delete().where(import_id.c.id = delete_id)
+    conn.execute(del_stmt)
+
 #get the importid to be deleted as delete_id and pass it to the function
 delete_live_data(delete_id)
 
