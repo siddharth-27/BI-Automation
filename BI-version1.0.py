@@ -11,6 +11,8 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 meta = MetaData()
 
+
+
 def convertColumns(liveDataDf):
     liveDataDf.columns = liveDataDf.columns.str.replace(' ','_') 
     liveDataDf.columns = liveDataDf.columns.str.replace('-','_') 
