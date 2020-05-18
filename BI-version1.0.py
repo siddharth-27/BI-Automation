@@ -7,11 +7,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from sqlalchemy import Table, Column, Integer, String, MetaData, ForeignKey, ForeignKeyConstraint, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
-
 Base = declarative_base()
 meta = MetaData()
-
-
 
 def convertColumns(liveDataDf):
     liveDataDf.columns = liveDataDf.columns.str.replace(' ','_') 
@@ -53,10 +50,11 @@ def getDataFrames():
     return liveDataDf, keyAccDf, accountDf
 
 def createTables(engine):
-    # create the necessary tables if they do not exist
-    print('Creating necessary tables')
+
+# create the necessary tables if they do not exist
+    print('Creating necessary tables')    
     accountData = Table(
-       'account_data', meta, 
+       'account_data', meta,
        Column('accountid', Integer,primary_key = True, autoincrement = False), 
        Column('account', String), 
        Column('keyaccount', Integer), 
@@ -113,11 +111,11 @@ def createTables(engine):
     # History data should be created similarly
     meta.create_all(engine)
     print('Tables created successfully')
+
     return accountData, liveData
 
-
 def insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData) :
-    accountDf = new_df = pd.read_sql_query('select * from account_data',con=engine)
+    accountDf = pd.read_sql_query('select * from account_data',con=engine)
     accIndex = accountDf['accountid'].max() + 1
     if math.isnan(accIndex) :
         accIndex = 1
@@ -152,9 +150,13 @@ def insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData) :
     print('Updated the required keyAccounts to 1')
     return accountDf
 
-
 def dropRowsFromLiveData(liveDataDf, accountDf) :
     liveDataDf.columns = map(str.lower, liveDataDf.columns)
+    for x in liveDataDf.columns[5:]:
+        liveDataDf = liveDataDf.astype(str)
+        liveDataDf[x] = liveDataDf[x].str.replace(',', '')
+    change=(liveDataDf.columns[5:])
+    liveDataDf[change]=liveDataDf[change].apply(pd.to_numeric)
     liveDataDf = pd.merge(liveDataDf, accountDf, on ='account', how='outer')
     liveDataDf = liveDataDf.drop(['account','keyaccount'], axis=1)
     print('Drop account and keyaccount from live data')
@@ -181,18 +183,11 @@ def id_generator():
             import_id=newimport_id()
     return import_id
 
-def insert_live_data(liveDataDf):
-    for x in liveDataDf.columns[5:]:
-        liveDataDf = liveDataDf.astype(str)
-        liveDataDf[x] = liveDataDf[x].str.replace(',', '')
-    change=(liveDataDf.columns[5:])
-    liveDataDf[change]=liveDataDf[change].apply(pd.to_numeric)         
+
+def insert_live_data(liveDataDf):         
     liveDataDf['import_id']=import_id
     liveDataDf.to_sql('live_data', con=engine,if_exists='append',index=False)
-    print('live data add to the table successfully')
-    return liveDataDf
-        
-    
+    print('live data added to the table successfully')
 
 conn,engine = connectToPostgres()
 liveDataSheet, keyAccSheet = connectToSheets()
@@ -205,15 +200,13 @@ import_id = int(id_generator())
 cols = liveDataDf.columns.tolist()
 cols = cols[-1:] + cols[:-1]
 liveDataDf = liveDataDf[cols]
-liveDataDf = insert_live_data(liveDataDf)
+insert_live_data(liveDataDf)
 
 
 '''
+to be built in a new file
 def delete_live_data(delete_id):
-    del_stmt = accountData.delete().where(import_id.c.id = delete_id)
+    del_stmt = liveData.delete().where(liveData.c.import_id == delete_id)
     conn.execute(del_stmt)
-
-#get the importid to be deleted as delete_id and pass it to the function
-delete_live_data(delete_id)
-
+delete_live_data(user_ip)
 '''
