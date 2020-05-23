@@ -23,7 +23,7 @@ def convertColumns(liveDataDf):
 
 # connecting to yugabyte DB can be changed to postgres later on.
 def connectToPostgres():
-    engine = create_engine('postgresql://yugabyte@localhost:5433/bi_automation')
+    engine = create_engine('postgresql://yugabyte@130.211.219.100:5433/yugabyte')
     conn = engine.connect()
     print('Connected to yugabyte instance')
     return conn,engine
@@ -39,7 +39,7 @@ def connectToSheets():
     return liveDataSheet, keyAccSheet
 #histDataSheet = sheetClient.open("HistoryData").sheet1
 
-def getDataFrames():
+def getDataFrames(liveDataSheet, keyAccSheet):
     # creating a dictionary of all the data
     accountDf = pd.DataFrame(data = None, columns=['accountid','account','keyaccount'])
     keyAccDict = keyAccSheet.get_all_records()
@@ -117,7 +117,7 @@ def createTables(engine):
 
     return accountData, liveData
 
-def insertIntoAccountTable(dataframe):
+def insertIntoAccountTable(dataframe, engine):
     Acc_list=list(set(dataframe['account']))
     accountDf  = pd.read_sql_query('select * from account_data',con=engine)
     accIndex = accountDf['accountid'].max() + 1
@@ -133,7 +133,7 @@ def insertIntoAccountTable(dataframe):
     print('new accounts added')
     return accountDf
 
-def keyaccountflagging(keyAccDf,accountDf,accountData):
+def keyaccountflagging(keyAccDf,accountDf,accountData, conn):
     x=set(keyAccDf['keyaccount'])
     y=set(accountDf['account'])
     inter =list(set(x).intersection(y))
@@ -158,7 +158,7 @@ def dropRowsFromLiveData(liveDataDf, accountDf) :
     print('Drop account and keyaccount from live data')
     return liveDataDf
 
-def id_generator():
+def id_generator(conn):
     def check(new_id):
         if str(new_id[4:6]) == str(datetime.now().month).zfill(2):
             new_id=int(new_id)+1
@@ -180,34 +180,45 @@ def id_generator():
     return import_id
 
 
-def insert_live_data(liveDataDf):         
+def insert_live_data(liveDataDf, engine, import_id):         
     liveDataDf['import_id']=import_id
     liveDataDf.to_sql('live_data', con=engine,if_exists='append',index=False)
     print('live data added to the table successfully')
 
-try:
-    conn,engine = connectToPostgres()
-    liveDataSheet, keyAccSheet = connectToSheets()
-    liveDataDf, keyAccDf, accountDf = getDataFrames()
-    convertColumns(liveDataDf)
-    accountData, liveData = createTables(engine)
-    accountDf = insertIntoAccountTable(liveDataDf)
-    accountDf = keyaccountflagging(keyAccDf,accountDf,accountData)
-    liveDataDf = dropRowsFromLiveData(liveDataDf, accountDf)
-    import_id = int(id_generator())
-    cols = liveDataDf.columns.tolist()
-    cols = cols[-1:] + cols[:-1]
-    liveDataDf = liveDataDf[cols]
-    insert_live_data(liveDataDf)
-
-except:
-    print(sys.exc_info())
-
-
-'''
-to be built in a new file
 def delete_live_data(delete_id):
     del_stmt = liveData.delete().where(liveData.c.import_id == delete_id)
     conn.execute(del_stmt)
-delete_live_data(user_ip)
-'''
+
+def getMaxImportId(conn):
+    getid = 'select max(import_id) from live_data;'
+    import_id = conn.execute(getid)
+    for row in import_id:
+        print (row[0])
+        importId = {"maxImportId" : row[0]}
+        return json.dumps(importId)
+    importId = {"maxImportId": 0}
+    return json.dumps(importId)
+
+def main():
+    try:
+        conn,engine = connectToPostgres()
+        liveDataSheet, keyAccSheet = connectToSheets()
+        liveDataDf, keyAccDf, accountDf = getDataFrames(liveDataSheet, keyAccSheet)
+        convertColumns(liveDataDf)
+        accountData, liveData = createTables(engine)
+        accountDf = insertIntoAccountTable(liveDataDf, engine)
+        accountDf = keyaccountflagging(keyAccDf,accountDf,accountData, conn)
+        liveDataDf = dropRowsFromLiveData(liveDataDf, accountDf)
+        import_id = int(id_generator(conn))
+        cols = liveDataDf.columns.tolist()
+        cols = cols[-1:] + cols[:-1]
+        liveDataDf = liveDataDf[cols]
+        insert_live_data(liveDataDf, engine, import_id)
+
+    except:
+        print(sys.exc_info())
+    
+
+main()
+
+getMaxImportId(conn)
