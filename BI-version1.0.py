@@ -1,4 +1,5 @@
 import pandas as pd
+import sys
 import gspread
 import math
 from datetime import datetime
@@ -10,6 +11,7 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 meta = MetaData()
 
+
 def convertColumns(liveDataDf):
     liveDataDf.columns = liveDataDf.columns.str.replace(' ','_') 
     liveDataDf.columns = liveDataDf.columns.str.replace('-','_') 
@@ -17,6 +19,7 @@ def convertColumns(liveDataDf):
     liveDataDf.columns = liveDataDf.columns.str.replace('7','seven')
     liveDataDf.columns = liveDataDf.columns.str.replace('1','one')
     liveDataDf.columns = liveDataDf.columns.str.replace('/','_or_')
+    liveDataDf.columns = map(str.lower, liveDataDf.columns)
 
 # connecting to yugabyte DB can be changed to postgres later on.
 def connectToPostgres():
@@ -114,29 +117,23 @@ def createTables(engine):
 
     return accountData, liveData
 
-def insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData) :
-    accountDf = pd.read_sql_query('select * from account_data',con=engine)
+def insertIntoAccountTable(dataframe):
+    Acc_list=list(set(dataframe['account']))
+    accountDf  = pd.read_sql_query('select * from account_data',con=engine)
     accIndex = accountDf['accountid'].max() + 1
     if math.isnan(accIndex) :
         accIndex = 1
-    
-    # adding a new dataframe so that we add just the new entries on the live data table in one single
-    # sql query this is needed in more in successive loads.
-    
     newEntryDf = pd.DataFrame(data = None, columns=['accountid','account','keyaccount'])
-    for index, row in liveDataDf.iterrows():
-        accName = row['Account']
-        if accName in (list(accountDf['account'])):
-            pass
-        else:
+    for accName in Acc_list:
+        if accName not in (list(accountDf['account'])):
             accountDf = accountDf.append({'accountid':accIndex,'account':accName, 'keyaccount':0},ignore_index=True)
             newEntryDf = newEntryDf.append({'accountid':accIndex,'account':accName, 'keyaccount':0},ignore_index=True)
             accIndex = accIndex + 1
-
     newEntryDf.to_sql('account_data', con = engine, if_exists='append', index = False)
-    print('Done inserting data')
+    print('new accounts added')
+    return accountDf
 
-    # get the common account names from both the accountsTable and keyAccounts Table to set the key acc to 1
+def keyaccountflagging(keyAccDf,accountDf,accountData):
     x=set(keyAccDf['keyaccount'])
     y=set(accountDf['account'])
     inter =list(set(x).intersection(y))
@@ -151,7 +148,6 @@ def insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData) :
     return accountDf
 
 def dropRowsFromLiveData(liveDataDf, accountDf) :
-    liveDataDf.columns = map(str.lower, liveDataDf.columns)
     for x in liveDataDf.columns[5:]:
         liveDataDf = liveDataDf.astype(str)
         liveDataDf[x] = liveDataDf[x].str.replace(',', '')
@@ -189,18 +185,23 @@ def insert_live_data(liveDataDf):
     liveDataDf.to_sql('live_data', con=engine,if_exists='append',index=False)
     print('live data added to the table successfully')
 
-conn,engine = connectToPostgres()
-liveDataSheet, keyAccSheet = connectToSheets()
-liveDataDf, keyAccDf, accountDf = getDataFrames()
-convertColumns(liveDataDf)
-accountData, liveData = createTables(engine)
-accountDf = insertIntoAccountTable(accountDf, keyAccDf, liveDataDf, accountData)
-liveDataDf = dropRowsFromLiveData(liveDataDf, accountDf)
-import_id = int(id_generator())
-cols = liveDataDf.columns.tolist()
-cols = cols[-1:] + cols[:-1]
-liveDataDf = liveDataDf[cols]
-insert_live_data(liveDataDf)
+try:
+    conn,engine = connectToPostgres()
+    liveDataSheet, keyAccSheet = connectToSheets()
+    liveDataDf, keyAccDf, accountDf = getDataFrames()
+    convertColumns(liveDataDf)
+    accountData, liveData = createTables(engine)
+    accountDf = insertIntoAccountTable(liveDataDf)
+    accountDf = keyaccountflagging(keyAccDf,accountDf,accountData)
+    liveDataDf = dropRowsFromLiveData(liveDataDf, accountDf)
+    import_id = int(id_generator())
+    cols = liveDataDf.columns.tolist()
+    cols = cols[-1:] + cols[:-1]
+    liveDataDf = liveDataDf[cols]
+    insert_live_data(liveDataDf)
+
+except:
+    print(sys.exc_info())
 
 
 '''
