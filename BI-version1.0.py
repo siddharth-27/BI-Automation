@@ -22,9 +22,20 @@ def convertColumns(liveDataDf):
     liveDataDf.columns = liveDataDf.columns.str.replace('/','_or_')
     liveDataDf.columns = map(str.lower, liveDataDf.columns)
 
+def convert_history_columns(histDataDf): 
+    histDataDf.columns = histDataDf.columns.str.replace(' ','_') 
+    histDataDf.columns = histDataDf.columns.str.replace('-','_') 
+    histDataDf.columns = histDataDf.columns.str.replace('"','')
+    histDataDf.columns = histDataDf.columns.str.replace('7','seven')
+    histDataDf.columns = histDataDf.columns.str.replace('1','one')
+    histDataDf.columns = histDataDf.columns.str.replace('/','_or_')
+    histDataDf.columns = map(str.lower, histDataDf.columns)
+    histDataDf=histDataDf.rename(columns={'company': 'account'})
+    print('columns converted')
+    return histDataDf
 # connecting to yugabyte DB can be changed to postgres later on.
 def connectToPostgres():
-    engine = create_engine('postgresql://postgres:1234@localhost:5432/postgres')
+    engine = create_engine('postgresql://yugabyte@localhost:5433/bi_automation')
     conn = engine.connect()
     print('Connected to yugabyte instance')
     return conn,engine
@@ -36,22 +47,25 @@ def connectToSheets():
     sheetClient = gspread.authorize(creds)
     liveDataSheet = sheetClient.open("LiveData").sheet1
     keyAccSheet = sheetClient.open("KeyAcc").sheet1
+    historysheet = sheetClient.open("history_data").sheet1
     print('read of spreadsheets successful')
-    return liveDataSheet, keyAccSheet
+    return liveDataSheet, keyAccSheet,historysheet
 #histDataSheet = sheetClient.open("HistoryData").sheet1
 
-def getDataFrames(liveDataSheet, keyAccSheet):
+def getDataFrames(liveDataSheet, keyAccSheet,historysheet):
     # creating a dictionary of all the data
     accountDf = pd.DataFrame(data = None, columns=['accountid','account','keyaccount'])
     keyAccDict = keyAccSheet.get_all_records()
     liveDataDict = liveDataSheet.get_all_records()
+    histDataDict = historysheet.get_all_records()
     #histDataDict = histDataSheet.get_all_records()
  
     # converting dict to dataframe
     liveDataDf = pd.DataFrame(liveDataDict)
     keyAccDf = pd.DataFrame(keyAccDict)
+    historyDataDf = pd.DataFrame(histDataDict)
     
-    return liveDataDf, keyAccDf, accountDf
+    return liveDataDf, keyAccDf, accountDf,historyDataDf
 
 def getTables():
     accountData = Table(
@@ -189,6 +203,17 @@ def insert_live_data(liveDataDf, engine, conn):
     liveDataDf.to_sql('live_data', con=engine,if_exists='append',index=False)
     print('live data added to the table successfully')
 
+def dropColumnsFromHisoryData(histDataDf,accountDf):
+    histDataDf = pd.merge(histDataDf, accountDf, on ='account', how='outer')
+    histDataDf = histDataDf.drop(['keyaccount','account',''], axis=1)
+    print('Drop account and keyaccount from history data')
+    return histDataDf
+
+def insert_history_data(histDataDf,engine):     
+    histDataDf.to_sql('history_data', con=engine,if_exists='replace',index=False)
+    print('History data live data added to the table successfully')
+    return histDataDf
+
 def closeDbConnection(conn):
     conn.close()
 
@@ -223,17 +248,21 @@ def getMaxImportId():
 def main():
     try:
         conn,engine = connectToPostgres()
-        liveDataSheet, keyAccSheet = connectToSheets()
-        liveDataDf, keyAccDf, accountDf = getDataFrames(liveDataSheet, keyAccSheet)
+        liveDataSheet, keyAccSheet,historysheet = connectToSheets()
+        liveDataDf, keyAccDf, accountDf,historyDataDf = getDataFrames(liveDataSheet, keyAccSheet,historysheet)
         convertColumns(liveDataDf)
         accountData, liveData = createTables(engine)
-        accountDf = insertIntoAccountTable(liveDataDf, engine)
+        historyDataDf=convert_history_columns(historyDataDf)
+        accountDf = insertIntoAccountTable(historyDataDf,engine)
+        accountDf=accountDf = insertIntoAccountTable(liveDataDf, engine)
         accountDf = keyAccountFlagging(keyAccDf,accountDf,accountData, conn)
         liveDataDf = dropRowsFromLiveData(liveDataDf, accountDf)
         cols = liveDataDf.columns.tolist()
         cols = cols[-1:] + cols[:-1]
         liveDataDf = liveDataDf[cols]
         insert_live_data(liveDataDf, engine, conn)
+        historyDataDf = dropColumnsFromHisoryData(historyDataDf, accountDf)
+        historyDataDf = insert_history_data(historyDataDf,engine)
         clearMetaData(meta)
         closeDbConnection(conn)
     except:
