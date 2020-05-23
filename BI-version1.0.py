@@ -2,6 +2,7 @@ import pandas as pd
 import sys
 import gspread
 import math
+import json
 from datetime import datetime
 from sqlalchemy import create_engine
 from oauth2client.service_account import ServiceAccountCredentials
@@ -23,7 +24,7 @@ def convertColumns(liveDataDf):
 
 # connecting to yugabyte DB can be changed to postgres later on.
 def connectToPostgres():
-    engine = create_engine('postgresql://yugabyte@130.211.219.100:5433/yugabyte')
+    engine = create_engine('postgresql://postgres:1234@localhost:5432/postgres')
     conn = engine.connect()
     print('Connected to yugabyte instance')
     return conn,engine
@@ -52,10 +53,7 @@ def getDataFrames(liveDataSheet, keyAccSheet):
     
     return liveDataDf, keyAccDf, accountDf
 
-def createTables(engine):
-
-# create the necessary tables if they do not exist
-    print('Creating necessary tables')    
+def getTables():
     accountData = Table(
        'account_data', meta,
        Column('accountid', Integer,primary_key = True, autoincrement = False), 
@@ -111,10 +109,15 @@ def createTables(engine):
         Column('cockroachdb', Integer),
         Column('import_id', Integer),
     )
+    return accountData, liveData
+
+def createTables(engine):
+# create the necessary tables if they do not exist
+    print('Creating necessary tables')    
+    accountData, liveData = getTables()
     # History data should be created similarly
     meta.create_all(engine)
     print('Tables created successfully')
-
     return accountData, liveData
 
 def insertIntoAccountTable(dataframe, engine):
@@ -133,7 +136,7 @@ def insertIntoAccountTable(dataframe, engine):
     print('new accounts added')
     return accountDf
 
-def keyaccountflagging(keyAccDf,accountDf,accountData, conn):
+def keyAccountFlagging(keyAccDf,accountDf,accountData, conn):
     x=set(keyAccDf['keyaccount'])
     y=set(accountDf['account'])
     inter =list(set(x).intersection(y))
@@ -180,24 +183,42 @@ def id_generator(conn):
     return import_id
 
 
-def insert_live_data(liveDataDf, engine, import_id):         
+def insert_live_data(liveDataDf, engine, conn):
+    import_id = int(id_generator(conn))  
     liveDataDf['import_id']=import_id
     liveDataDf.to_sql('live_data', con=engine,if_exists='append',index=False)
     print('live data added to the table successfully')
 
+def closeDbConnection(conn):
+    conn.close()
+
+def clearMetaData(meta):
+    meta.clear()
+
+def reArrangeLiveDataCols(liveDataDf):
+    cols = liveDataDf.columns.tolist()
+    cols = cols[-1:] + cols[:-1]
+    liveDataDf = liveDataDf[cols]
+
 def delete_live_data(delete_id):
+    conn,engine = connectToPostgres()
+    accountData, liveData = getTables()
     del_stmt = liveData.delete().where(liveData.c.import_id == delete_id)
     conn.execute(del_stmt)
+    closeDbConnection(conn)
 
-def getMaxImportId(conn):
+def getMaxImportId():
+    conn,engine = connectToPostgres()
     getid = 'select max(import_id) from live_data;'
     import_id = conn.execute(getid)
     for row in import_id:
         print (row[0])
         importId = {"maxImportId" : row[0]}
         return json.dumps(importId)
+        closeDbConnection(conn)
     importId = {"maxImportId": 0}
     return json.dumps(importId)
+    closeDbConnection(conn)
 
 def main():
     try:
@@ -207,18 +228,17 @@ def main():
         convertColumns(liveDataDf)
         accountData, liveData = createTables(engine)
         accountDf = insertIntoAccountTable(liveDataDf, engine)
-        accountDf = keyaccountflagging(keyAccDf,accountDf,accountData, conn)
+        accountDf = keyAccountFlagging(keyAccDf,accountDf,accountData, conn)
         liveDataDf = dropRowsFromLiveData(liveDataDf, accountDf)
-        import_id = int(id_generator(conn))
         cols = liveDataDf.columns.tolist()
         cols = cols[-1:] + cols[:-1]
         liveDataDf = liveDataDf[cols]
-        insert_live_data(liveDataDf, engine, import_id)
-
+        insert_live_data(liveDataDf, engine, conn)
+        clearMetaData(meta)
+        closeDbConnection(conn)
     except:
-        print(sys.exc_info())
-    
+        print(sys.exc_info())    
 
 main()
-
-getMaxImportId(conn)
+#delete_live_data(20200510)
+#getMaxImportId()
